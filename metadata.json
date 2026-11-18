@@ -1,0 +1,6 @@
+{
+  "name": "نظام إدارة المبيعات",
+  "description": "نظام نقاط بيع وإدارة مخزون وصندوق وموظفين باللغة العربية",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

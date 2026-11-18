@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>نظام إدارة المبيعات</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+:root{--bg:#f4f7f6;--cd:#fff;--tx:#222;--bd:#ddd;--pr:#38608f;--mu:#777;--wn:#fff3cd;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#15191c;--cd:#1f2428;--tx:#e8e8e8;--bd:#3a4248;--pr:#4f7fb5;--mu:#999;--wn:#4a4020}}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;background:var(--bg);color:var(--tx);margin:0}
+.container{padding:16px;max-width:1200px;margin:auto}
+.btn{padding:10px 16px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:15px;color:#fff;background:var(--pr)}
+.btn.b{width:100%}.btn.d{background:#e74c3c}.btn.s{background:#27ae60}.btn.w{background:#f1c40f;color:#000}.btn.g{background:#95a5a6}.btn.sm{padding:4px 10px;font-size:14px}
+input,select{padding:10px;margin:6px 0;border:1px solid var(--bd);border-radius:6px;width:100%;box-sizing:border-box;font-size:15px;background:var(--cd);color:var(--tx)}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;margin-top:10px;background:var(--cd)}
+th,td{border:1px solid var(--bd);padding:8px;text-align:center}th{background:var(--pr);color:#fff}td input{margin:0;min-width:70px}
+.card{background:var(--cd);padding:16px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.12);margin-bottom:16px}
+.row{display:flex;gap:16px;flex-wrap:wrap}.f1{flex:1;min-width:240px}.f3{flex:3;min-width:300px}
+.hd{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;background:var(--pr);color:#fff}
+.st{color:#fff;text-align:center}.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:12px}
+.md{background:var(--cd);padding:20px;border-radius:10px;width:100%;max-width:440px;max-height:85vh;overflow:auto}
+.toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 20px;border-radius:8px;z-index:99}
+.mu{color:var(--mu);font-size:13px}.low{background:#e74c3c33}
+@media print{body *{visibility:hidden}#invoice,#invoice *{visibility:visible}#invoice{position:absolute;top:0;right:0;width:100%;color:#000}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect}=React;
+const KEY='pos_v3';
+const num=v=>{const n=parseFloat(v);return isNaN(n)?0:n};
+const fmt=n=>Number(n||0).toLocaleString('en-US');
+const norm=s=>(s||'').toLowerCase().replace(/[أإآ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/ط/g,'ت').replace(/\s+/g,' ').trim();
+const sameDay=ts=>new Date(ts).toDateString()===new Date().toDateString();
+const tm=ts=>new Date(ts).toLocaleTimeString('ar-SY',{hour:'2-digit',minute:'2-digit'});
+const seed={users:[{id:1,name:'محمد',role:'manager',owner:true,pin:'0000'}],
+products:[{id:1,name:'شال كشمير روز',price:65000,min:50000,cost:40000,stock:20},{id:2,name:'شنتة 6.75',price:120000,min:100000,cost:80000,stock:10},{id:3,name:'عطر ياسمين',price:40000,min:30000,cost:22000,stock:30}],
+sales:[],expenses:[],withdrawals:[],salaries:[],returns:[],shifts:[],log:[],opening:0,lastClose:0,nid:100};
+const load=()=>{try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&s.users)return s}catch(e){}return seed};
+const addLog=(d,who,t)=>{d.log.unshift({ts:Date.now(),who,t});d.log=d.log.slice(0,200)};
+const expectedCash=d=>{const c=d.lastClose;
+ return d.opening+d.sales.filter(s=>s.ts>c).reduce((a,s)=>a+s.total,0)-d.expenses.filter(e=>e.ts>c).reduce((a,e)=>a+e.amount,0)
+ -d.withdrawals.filter(w=>w.type==='cash'&&w.status!=='rejected'&&w.ts>c).reduce((a,w)=>a+w.amount,0)-d.salaries.filter(w=>w.status!=='rejected'&&w.ts>c).reduce((a,w)=>a+w.amount,0)-d.returns.filter(r=>r.ts>c).reduce((a,r)=>a+r.price*r.qty,0)};
+
+const Modal=({title,onClose,children})=>(<div className="ov" onClick={onClose}><div className="md" onClick={e=>e.stopPropagation()}><h3 style={{marginTop:0}}>{title}</h3>{children}</div></div>);
+
+const AmountForm=({title,onSubmit,onClose,T})=>{
+ const [desc,setDesc]=useState(''),[amt,setAmt]=useState('');
+ const go=()=>{if(!desc.trim()||num(amt)<=0){T('أدخل البيان ومبلغاً أكبر من صفر');return}onSubmit(desc.trim(),num(amt));onClose()};
+ return(<Modal title={title} onClose={onClose}><input placeholder="البيان" value={desc} onChange={e=>setDesc(e.target.value)}/><input type="number" placeholder="المبلغ" value={amt} onChange={e=>setAmt(e.target.value)}/>
+ <div style={{display:'flex',gap:8}}><button className="btn s b" onClick={go}>حفظ</button><button className="btn g b" onClick={onClose}>إلغاء</button></div></Modal>)};
+
+const CATS=['شاي','قهوة','كاسات','منظفات','أخرى'];
+const ExpenseForm=({onSubmit,onClose,T})=>{
+ const [c,setC]=useState(''),[o,setO]=useState(''),[amt,setAmt]=useState('');
+ const go=()=>{const desc=c==='أخرى'?o.trim():c;if(!desc||num(amt)<=0){T('اختر البند وأدخل مبلغاً أكبر من صفر');return}onSubmit(desc,num(amt));onClose()};
+ return(<Modal title="مصاريف ونثريات" onClose={onClose}><select value={c} onChange={e=>setC(e.target.value)}><option value="">-- اختر البند --</option>{CATS.map(x=><option key={x}>{x}</option>)}</select>
+ {c==='أخرى'&&<input placeholder="اكتب البند" value={o} onChange={e=>setO(e.target.value)}/>}
+ <input type="number" placeholder="المبلغ" value={amt} onChange={e=>setAmt(e.target.value)}/>
+ <div style={{display:'flex',gap:8}}><button className="btn s b" onClick={go}>حفظ</button><button className="btn g b" onClick={onClose}>إلغاء</button></div></Modal>)};
+const SalaryForm=({db,onSubmit,onClose,T})=>{
+ const [id,setId]=useState(''),[pin,setPin]=useState(''),[amt,setAmt]=useState('');
+ const go=()=>{const u=db.users.find(x=>String(x.id)===id);if(!u||num(amt)<=0){T('اختر الموظف وأدخل المبلغ');return}
+  const mgr=db.users.some(m=>m.role==='manager'&&m.pin===pin);
+  if(!mgr&&u.pin!==pin){T('كلمة السر خاطئة');setPin('');return}
+  onSubmit(u,num(amt),mgr);onClose()};
+ return(<Modal title="صرف راتب" onClose={onClose}><select value={id} onChange={e=>setId(e.target.value)}><option value="">-- اختر الموظف --</option>{db.users.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
+ <input type="number" placeholder="قيمة الراتب" value={amt} onChange={e=>setAmt(e.target.value)}/>
+ <input type="password" inputMode="numeric" placeholder="كلمة السر" value={pin} onChange={e=>setPin(e.target.value)}/>
+ <div style={{display:'flex',gap:8}}><button className="btn s b" onClick={go}>تأكيد</button><button className="btn g b" onClick={onClose}>إلغاء</button></div></Modal>)};
+const WithdrawForm=({db,onSubmit,onClose,T})=>{
+ const [m,setM]=useState(''),[amt,setAmt]=useState(''),[q,setQ]=useState({});
+ const go=()=>{
+  if(m==='cash'){if(num(amt)<=0){T('أدخل المبلغ');return}onSubmit({type:'cash',amount:num(amt),items:[]})}
+  else{const items=db.products.filter(p=>q[p.id]>0).map(p=>({id:p.id,name:p.name,qty:q[p.id]}));if(!items.length){T('اختر غرضاً واحداً على الأقل');return}onSubmit({type:'goods',amount:0,items})}
+  onClose()};
+ const step=(p,dl)=>setQ({...q,[p.id]:Math.max(0,Math.min(p.stock,(q[p.id]||0)+dl))});
+ return(<Modal title="مسحوبات إدارة" onClose={onClose}>
+ {!m?<div style={{display:'flex',flexDirection:'column',gap:10}}><button className="btn" onClick={()=>setM('cash')}>💵 مبلغ نقدي من الدرج</button><button className="btn w" onClick={()=>setM('goods')}>📦 أغراض من المحل</button><button className="btn g" onClick={onClose}>إلغاء</button></div>
+ :<>{m==='cash'?<input type="number" placeholder="المبلغ الذي أخذه المدير" value={amt} onChange={e=>setAmt(e.target.value)}/>
+ :<div>{db.products.map(p=><div key={p.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',borderBottom:'1px solid var(--bd)'}}><span>{p.name} <span className="mu">[{p.stock}]</span></span>
+  <span style={{whiteSpace:'nowrap'}}><button className="btn sm g" onClick={()=>step(p,-1)}>-</button> {q[p.id]||0} <button className="btn sm g" onClick={()=>step(p,1)}>+</button></span></div>)}</div>}
+ <div style={{display:'flex',gap:8,marginTop:10}}><button className="btn s b" onClick={go}>حفظ وإبلاغ المدير</button><button className="btn g b" onClick={()=>setM('')}>رجوع</button></div></>}</Modal>)};
+const PinEdit=({u,db,upd,T,who,canSee})=>{
+ const [v,setV]=useState(canSee?u.pin:'');
+ const save=()=>{if(v.length<4){T('4 خانات على الأقل');return}
+  if(db.users.some(x=>x.id!==u.id&&x.pin===v&&(x.role==='manager')!==(u.role==='manager'))){T('هذا الرقم مستخدم لحساب آخر');return}
+  upd(d=>{d.users.find(x=>x.id===u.id).pin=v;addLog(d,who,'تغيير رقم سري: '+u.name);return d});T('تم الحفظ');if(!canSee)setV('')};
+ return(<div style={{display:'flex',gap:6}}><input type={canSee?'text':'password'} placeholder={canSee?'':'كلمة سر جديدة'} value={v} onChange={e=>setV(e.target.value)}/>{v&&v!==u.pin&&<button className="btn sm s" onClick={save}>حفظ</button>}</div>)};
+
+const Login=({db,onLogin,T})=>{
+ const [uid,setUid]=useState(''),[pin,setPin]=useState('');
+ const go=e=>{e.preventDefault();const u=db.users.find(x=>String(x.id)===uid);if(!u){T('اختر الاسم');return}
+  if(u.pin===pin||db.users.some(m=>m.role==='manager'&&m.pin===pin))onLogin(u);else{T('كلمة السر خاطئة');setPin('')}};
+ return(<div className="container" style={{maxWidth:400,marginTop:'10vh'}}><div className="card" style={{textAlign:'center'}}>
+ <h2 style={{color:'var(--pr)'}}>تسجيل الدخول</h2><form onSubmit={go}>
+ <select value={uid} onChange={e=>setUid(e.target.value)}><option value="">-- اختر اسمك --</option>{db.users.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
+ <input type="password" inputMode="numeric" value={pin} onChange={e=>setPin(e.target.value)} placeholder="الرقم السري"/>
+ <button className="btn b" type="submit">دخول</button></form></div></div>)};
+
+const Cashier=({db,upd,user,onLogout,T})=>{
+ const [q,setQ]=useState(''),[cart,setCart]=useState([]),[dr,setDr]=useState({}),[modal,setModal]=useState(null),[inv,setInv]=useState(null),[cnt,setCnt]=useState(''),[tries,setTries]=useState(0);
+ const list=db.products.filter(p=>!q||norm(p.name).includes(norm(q)));
+ const stockOf=id=>db.products.find(p=>p.id===id).stock;
+ const add=p=>{const c=cart.find(x=>x.id===p.id);const n=c?c.qty+1:1;if(n>p.stock){T('الكمية المتوفرة بالمخزون: '+p.stock);return}
+  setCart(c?cart.map(x=>x.id===p.id?{...x,qty:n}:x):[...cart,{id:p.id,name:p.name,min:p.min,cost:p.cost,qty:1,price:p.price}])};
+ const chg=(id,dlt)=>{const c=cart.find(x=>x.id===id),n=c.qty+dlt;if(n>stockOf(id)){T('لا يوجد مخزون كافٍ');return}
+  setCart(n<=0?cart.filter(x=>x.id!==id):cart.map(x=>x.id===id?{...x,qty:n}:x))};
+ const blur=c=>{const v=dr[c.id];if(v===undefined)return;const n=parseFloat(v);
+  if(isNaN(n)||n<c.min)T('لا يمكن البيع بأقل من الحد الأدنى ('+fmt(c.min)+')');else setCart(cart.map(x=>x.id===c.id?{...x,price:n}:x));
+  setDr(({[c.id]:_,...r})=>r)};
+ const total=cart.reduce((a,c)=>a+c.qty*c.price,0);
+ const confirm=()=>{const sale={id:db.nid,emp:user.name,items:cart.map(c=>({id:c.id,name:c.name,qty:c.qty,price:c.price,cost:c.cost,ret:0})),total,ts:Date.now()};
+  upd(d=>{sale.items.forEach(i=>{d.products.find(p=>p.id===i.id).stock-=i.qty});d.sales.unshift(sale);d.nid++;addLog(d,user.name,'فاتورة #'+sale.id+' بقيمة '+fmt(total));return d});
+  setCart([]);setInv(sale)};
+ const ret=(s,it)=>{upd(d=>{const S=d.sales.find(x=>x.id===s.id),I=S.items.find(x=>x.id===it.id);I.ret++;d.products.find(p=>p.id===it.id).stock++;
+  d.returns.unshift({name:it.name,price:it.price,qty:1,emp:user.name,ts:Date.now(),sale:s.id});addLog(d,user.name,'مرتجع '+it.name+' من فاتورة #'+s.id);return d});T('تم تسجيل المرتجع')};
+ const close=()=>{const exp=expectedCash(db),a=num(cnt);
+  if(a===exp||tries>=2){const diff=a-exp;
+   upd(d=>{d.shifts.unshift({emp:user.name,expected:exp,actual:a,diff,ts:Date.now(),tries:tries+1});d.opening=a;d.lastClose=Date.now();
+    addLog(d,user.name,'إنهاء دوام'+(diff?' - فرق '+fmt(diff):' - مطابق'));return d});
+   T(diff?'سُجّل الفرق وتم إبلاغ المدير':'الصندوق مطابق');onLogout()}
+  else{setTries(tries+1);T('الرقم غير مطابق ('+(tries+1)+'/3)');setCnt('')}};
+ const mine=db.withdrawals.filter(w=>w.emp===user.name&&w.status==='pending').length;
+ const todaySales=db.sales.filter(s=>sameDay(s.ts)).slice(0,15);
+ return(<div className="container">
+ <div className="card hd"><h3 style={{margin:0}}>مرحباً: {user.name}</h3><button className="btn d" onClick={()=>setModal('close')}>إنهاء الدوام (جرد)</button></div>
+ <div className="row"><div className="card f3"><h3>فاتورة المبيع</h3>
+  <input placeholder="ابحث عن منتج (بدون تشكيل أو همزات)..." value={q} onChange={e=>setQ(e.target.value)}/>
+  <div style={{margin:'8px 0'}}>{list.map(p=><button key={p.id} className={'btn s'+(p.stock<=0?' g':'')} style={{margin:4}} disabled={p.stock<=0} onClick={()=>add(p)}>+ {p.name} ({fmt(p.price)}) <span className="mu" style={{color:'#fff'}}>[{p.stock}]</span></button>)}{!list.length&&<p className="mu">لا نتائج</p>}</div>
+  <div className="tw"><table><thead><tr><th>المنتج</th><th>العدد</th><th>السعر</th><th>الإجمالي</th><th></th></tr></thead><tbody>
+  {cart.map(c=><tr key={c.id}><td>{c.name}</td>
+   <td style={{whiteSpace:'nowrap'}}><button className="btn sm g" onClick={()=>chg(c.id,-1)}>-</button> {c.qty} <button className="btn sm g" onClick={()=>chg(c.id,1)}>+</button></td>
+   <td><input type="number" value={dr[c.id]!==undefined?dr[c.id]:c.price} onChange={e=>setDr({...dr,[c.id]:e.target.value})} onBlur={()=>blur(c)}/><div className="mu">الحد الأدنى {fmt(c.min)}</div></td>
+   <td><b>{fmt(c.qty*c.price)}</b></td><td><button className="btn sm d" onClick={()=>setCart(cart.filter(x=>x.id!==c.id))}>حذف</button></td></tr>)}</tbody></table></div>
+  {cart.length>0&&<><h3>الإجمالي: {fmt(total)}</h3><button className="btn b" onClick={confirm}>تأكيد البيع وحفظ الفاتورة</button></>}
+ </div>
+ <div className="card f1" style={{display:'flex',flexDirection:'column',gap:12}}>
+  <button className="btn g" onClick={()=>setModal('exp')}>إضافة مصاريف ونثريات</button>
+  <button className="btn" onClick={()=>setModal('sal')}>صرف راتب</button>
+  <button className="btn w" onClick={()=>setModal('wd')}>تسجيل مسحوبات إدارة</button>
+  {mine>0&&<div className="mu">لديك {mine} طلب سحب بانتظار موافقة المدير</div>}
+  <button className="btn d" onClick={()=>setModal('ret')}>ترجيع غرض (مرتجع)</button></div></div>
+ {modal==='exp'&&<ExpenseForm T={T} onClose={()=>setModal(null)} onSubmit={(t,a)=>{upd(d=>{d.expenses.unshift({desc:t,amount:a,emp:user.name,ts:Date.now()});addLog(d,user.name,'مصروف: '+t+' '+fmt(a));return d});T('تم تسجيل المصروف')}}/>}
+ {modal==='wd'&&<WithdrawForm db={db} T={T} onClose={()=>setModal(null)} onSubmit={({type,amount,items})=>{upd(d=>{items.forEach(i=>{d.products.find(p=>p.id===i.id).stock-=i.qty});d.withdrawals.unshift({id:d.nid++,type,amount,items,emp:user.name,ts:Date.now(),status:'pending'});addLog(d,user.name,'سحب إدارة ('+(type==='cash'?fmt(amount):'أغراض')+')');return d});T('أُرسل للمدير للتأكيد')}}/>}
+ {modal==='sal'&&<SalaryForm db={db} T={T} onClose={()=>setModal(null)} onSubmit={(u,amount,mgr)=>{upd(d=>{d.salaries.unshift({id:d.nid++,uid:u.id,name:u.name,amount,by:user.name,ts:Date.now(),status:mgr?'approved':'pending'});addLog(d,user.name,'راتب '+u.name+' '+fmt(amount));return d});T('تم تسجيل العملية')}}/>}
+ {modal==='ret'&&<Modal title="مرتجع (فواتير اليوم)" onClose={()=>setModal(null)}>{!todaySales.length&&<p className="mu">لا فواتير اليوم</p>}
+  {todaySales.map(s=><div key={s.id} style={{borderBottom:'1px solid var(--bd)',padding:'6px 0'}}><b>#{s.id}</b> <span className="mu">{tm(s.ts)}</span>
+  {s.items.map(i=><div key={i.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span>{i.name} × {i.qty} ({fmt(i.price)}){i.ret>0&&<span className="mu"> - مرتجع {i.ret}</span>}</span>
+  <button className="btn sm d" disabled={i.ret>=i.qty} onClick={()=>ret(s,i)}>ترجيع 1</button></div>)}</div>)}</Modal>}
+ {modal==='close'&&<Modal title="جرد الصندوق" onClose={()=>setModal(null)}><p className="mu">أدخل المبلغ الموجود فعلياً في الصندوق. المحاولات: {tries}/3</p>
+  <input type="number" value={cnt} onChange={e=>setCnt(e.target.value)} placeholder="المبلغ الفعلي"/>
+  <div style={{display:'flex',gap:8}}><button className="btn s b" onClick={close}>تأكيد</button><button className="btn g b" onClick={()=>setModal(null)}>رجوع</button></div></Modal>}
+ {inv&&<Modal title="تمت العملية" onClose={()=>setInv(null)}><div id="invoice"><h3 style={{textAlign:'center',margin:'0 0 6px'}}>فاتورة #{inv.id}</h3>
+  <div className="mu">{new Date(inv.ts).toLocaleString('ar-SY')} - {inv.emp}</div>
+  <table><thead><tr><th>الصنف</th><th>عدد</th><th>سعر</th><th>مجموع</th></tr></thead><tbody>{inv.items.map(i=><tr key={i.id}><td>{i.name}</td><td>{i.qty}</td><td>{fmt(i.price)}</td><td>{fmt(i.qty*i.price)}</td></tr>)}</tbody></table>
+  <h3>الإجمالي: {fmt(inv.total)}</h3></div>
+  <div style={{display:'flex',gap:8}}><button className="btn b" onClick={()=>window.print()}>طباعة</button><button className="btn g b" onClick={()=>setInv(null)}>إغلاق</button></div></Modal>}
+ </div>)};
+
+const Manager=({db,upd,user,onLogout,T})=>{
+ const [tab,setTab]=useState('dash'),[sal,setSal]=useState(false),[np,setNp]=useState({name:'',price:'',min:'',cost:'',stock:''}),[nu,setNu]=useState({name:'',pin:'',role:'employee'});
+ const ts=db.sales.filter(s=>sameDay(s.ts)),tr=db.returns.filter(r=>sameDay(r.ts)),te=db.expenses.filter(e=>sameDay(e.ts));
+ const gross=ts.reduce((a,s)=>a+s.total,0)-tr.reduce((a,r)=>a+r.price*r.qty,0);
+ const margin=ts.reduce((a,s)=>a+s.items.reduce((b,i)=>b+(i.price-i.cost)*(i.qty-i.ret),0),0);
+ const exp=te.reduce((a,e)=>a+e.amount,0)+db.salaries.filter(s=>s.status==='approved'&&sameDay(s.ts)).reduce((a,s)=>a+s.amount,0),pend=db.withdrawals.filter(w=>w.status==='pending'),pendS=db.salaries.filter(s=>s.status==='pending');
+ const decide=(w,st)=>upd(d=>{const x=d.withdrawals.find(y=>y.id===w.id);x.status=st;if(st==='rejected')x.items.forEach(i=>{const p=d.products.find(q=>q.id===i.id);if(p)p.stock+=i.qty});addLog(d,user.name,(st==='approved'?'تأكيد':'نفي')+' سحب '+w.emp+(w.type==='cash'?' '+fmt(w.amount):' (أغراض)'));return d});
+ const decideS=(s,st)=>upd(d=>{d.salaries.find(y=>y.id===s.id).status=st;addLog(d,user.name,(st==='approved'?'موافقة':'رفض')+' راتب '+s.name+' '+fmt(s.amount));return d});
+ const setP=(id,k,v)=>upd(d=>{d.products.find(p=>p.id===id)[k]=k==='name'?v:num(v);return d});
+ const addP=()=>{const p={name:np.name.trim(),price:num(np.price),min:num(np.min),cost:num(np.cost),stock:num(np.stock)};
+  if(!p.name||p.price<=0||p.min>p.price){T('تحقق من الاسم والسعر (الحد الأدنى يجب ألا يتجاوز السعر)');return}
+  upd(d=>{d.products.push({...p,id:d.nid++});addLog(d,user.name,'إضافة منتج '+p.name);return d});setNp({name:'',price:'',min:'',cost:'',stock:''})};
+ const addU=()=>{if(!nu.name.trim()||nu.pin.length<4){T('الاسم مطلوب والرقم السري 4 خانات على الأقل');return}
+  if(db.users.some(x=>x.pin===nu.pin&&(x.role==='manager')!==(nu.role==='manager'))){T('هذا الرقم مستخدم لحساب آخر، اختر رقماً مختلفاً');return}
+  upd(d=>{d.users.push({id:d.nid++,name:nu.name.trim(),role:nu.role,pin:nu.pin});addLog(d,user.name,'إضافة موظف '+nu.name);return d});setNu({name:'',pin:'',role:'employee'})};
+ const tabs=[['dash','الرئيسية'],['inv','المخزون'],['cash','الصندوق والتقارير'],['staff','الموظفون'],['log','سجل التدقيق']];
+ return(<div className="container">
+ <div className="card hd" style={{background:'#2c3e50'}}><h3 style={{margin:0}}>لوحة الإدارة | {user.name}</h3><button className="btn d" onClick={onLogout}>تسجيل الخروج</button></div>
+ <div className="tabs">{tabs.map(([k,l])=><button key={k} className={'btn sm '+(tab===k?'':'g')} onClick={()=>setTab(k)}>{l}{k==='dash'&&pend.length+pendS.length>0?' ('+(pend.length+pendS.length)+')':''}</button>)}<button className="btn sm s" onClick={()=>setSal(true)}>صرف راتب</button></div>
+ {sal&&<SalaryForm db={db} T={T} onClose={()=>setSal(false)} onSubmit={(u,amount,mgr)=>{upd(d=>{d.salaries.unshift({id:d.nid++,uid:u.id,name:u.name,amount,by:user.name,ts:Date.now(),status:mgr?'approved':'pending'});addLog(d,user.name,'راتب '+u.name+' '+fmt(amount));return d});T('تم تسجيل الراتب')}}/>}
+ {tab==='dash'&&<><div className="row">
+  <div className="card f1 st" style={{background:'#27ae60'}}><h4>صافي مبيعات اليوم</h4><h2>{fmt(gross)}</h2></div>
+  <div className="card f1 st" style={{background:'#2980b9'}}><h4>صافي الأرباح</h4><h2>{fmt(margin-exp)}</h2></div>
+  <div className="card f1 st" style={{background:'#f39c12'}}><h4>المصاريف</h4><h2>{fmt(exp)}</h2></div>
+  <div className="card f1 st" style={{background:'#8e44ad'}}><h4>الصندوق المتوقع</h4><h2>{fmt(expectedCash(db))}</h2></div></div>
+  <div className="row"><div className="card f1" style={{border:'2px solid #f39c12'}}><h4>🔔 بانتظار تأكيدك</h4>
+  {!pend.length&&!pendS.length&&<p className="mu">لا طلبات</p>}
+  {pend.map(w=><div key={w.id} style={{background:'var(--wn)',padding:12,borderRadius:6,marginBottom:8}}><p><b>الموظف:</b> {w.emp}</p><p>{w.type==='cash'?<>سجّل سحب مبلغ <b>{fmt(w.amount)}</b> من الدرج. هل أخذته فعلاً؟</>:<>سجّل سحب أغراض: <b>{w.items.map(i=>i.name+'×'+i.qty).join('، ')}</b>. هل أخذتها فعلاً؟</>}</p>
+  <div style={{display:'flex',gap:8}}><button className="btn s b" onClick={()=>decide(w,'approved')}>نعم، أخذها</button><button className="btn d b" onClick={()=>decide(w,'rejected')}>لا، لم يأخذها</button></div></div>)}
+  {pendS.map(s=><div key={s.id} style={{background:'var(--wn)',padding:12,borderRadius:6,marginBottom:8}}><p><b>راتب:</b> {s.name} - {fmt(s.amount)}</p><p className="mu">سجّله {s.by}. الموافقة تُدخله ضمن المصاريف.</p><div style={{display:'flex',gap:8}}><button className="btn s b" onClick={()=>decideS(s,'approved')}>موافقة</button><button className="btn d b" onClick={()=>decideS(s,'rejected')}>رفض</button></div></div>)}</div>
+  <div className="card f3"><h4>شريط المبيعات اللحظي</h4><div className="tw"><table><thead><tr><th>#</th><th>الأصناف</th><th>المبلغ</th><th>الموظف</th><th>الوقت</th></tr></thead><tbody>
+  {db.sales.slice(0,10).map(s=><tr key={s.id}><td>{s.id}</td><td>{s.items.map(i=>i.name+'×'+i.qty).join('، ')}</td><td style={{color:'#27ae60',fontWeight:'bold'}}>{fmt(s.total)}</td><td>{s.emp}</td><td>{tm(s.ts)}</td></tr>)}</tbody></table></div></div></div></>}
+ {tab==='inv'&&<div className="card"><h4>المخزون والأسعار</h4><div className="tw"><table><thead><tr><th>الاسم</th><th>سعر البيع</th><th>الحد الأدنى</th><th>التكلفة</th><th>المخزون</th><th></th></tr></thead><tbody>
+  {db.products.map(p=><tr key={p.id} className={p.stock<=3?'low':''}><td><input value={p.name} onChange={e=>setP(p.id,'name',e.target.value)}/></td>
+  {['price','min','cost','stock'].map(k=><td key={k}><input type="number" value={p[k]} onChange={e=>setP(p.id,k,e.target.value)}/></td>)}
+  <td><button className="btn sm d" onClick={()=>{if(window.confirm('حذف '+p.name+'؟'))upd(d=>{d.products=d.products.filter(x=>x.id!==p.id);addLog(d,user.name,'حذف منتج '+p.name);return d})}}>حذف</button></td></tr>)}</tbody></table></div>
+  <p className="mu">الصفوف الحمراء = مخزون 3 أو أقل</p><h4>إضافة منتج</h4>
+  <div className="row">{[['name','الاسم'],['price','سعر البيع'],['min','الحد الأدنى'],['cost','التكلفة'],['stock','الكمية']].map(([k,l])=><div key={k} className="f1"><input type={k==='name'?'text':'number'} placeholder={l} value={np[k]} onChange={e=>setNp({...np,[k]:e.target.value})}/></div>)}</div>
+  <button className="btn s" onClick={addP}>إضافة</button></div>}
+ {tab==='cash'&&<><div className="card"><h4>جرد الدوامات</h4><div className="tw"><table><thead><tr><th>الموظف</th><th>المتوقع</th><th>الفعلي</th><th>الفرق</th><th>الوقت</th></tr></thead><tbody>
+  {db.shifts.map((s,i)=><tr key={i}><td>{s.emp}</td><td>{fmt(s.expected)}</td><td>{fmt(s.actual)}</td><td style={{color:s.diff?'#e74c3c':'#27ae60',fontWeight:'bold'}}>{s.diff?fmt(s.diff):'مطابق'}</td><td>{new Date(s.ts).toLocaleString('ar-SY')}</td></tr>)}</tbody></table></div></div>
+  <div className="card"><h4>المصاريف</h4><div className="tw"><table><thead><tr><th>البيان</th><th>المبلغ</th><th>الموظف</th><th>الوقت</th></tr></thead><tbody>
+  {db.expenses.slice(0,30).map((e,i)=><tr key={i}><td>{e.desc}</td><td>{fmt(e.amount)}</td><td>{e.emp}</td><td>{new Date(e.ts).toLocaleString('ar-SY')}</td></tr>)}</tbody></table></div></div>
+  <div className="card"><h4>الرواتب</h4><div className="tw"><table><thead><tr><th>الموظف</th><th>المبلغ</th><th>سجّله</th><th>الحالة</th><th>الوقت</th></tr></thead><tbody>{db.salaries.slice(0,30).map(s=><tr key={s.id}><td>{s.name}</td><td>{fmt(s.amount)}</td><td>{s.by}</td><td>{{pending:'بالانتظار',approved:'معتمد',rejected:'مرفوض'}[s.status]}</td><td>{new Date(s.ts).toLocaleString('ar-SY')}</td></tr>)}</tbody></table></div></div>
+  <div className="card"><h4>سجل المسحوبات</h4><div className="tw"><table><thead><tr><th>الموظف</th><th>البيان</th><th>المبلغ</th><th>الحالة</th></tr></thead><tbody>
+  {db.withdrawals.slice(0,30).map(w=><tr key={w.id}><td>{w.emp}</td><td>{w.type==='cash'?'نقدي':w.items.map(i=>i.name+'×'+i.qty).join('، ')}</td><td>{w.type==='cash'?fmt(w.amount):'-'}</td><td>{{pending:'بالانتظار',approved:'موافق',rejected:'مرفوض'}[w.status]}</td></tr>)}</tbody></table></div></div></>}
+ {tab==='staff'&&<div className="card"><h4>الموظفون</h4><div className="tw"><table><thead><tr><th>الاسم</th><th>الدور</th><th>الرقم السري</th><th></th></tr></thead><tbody>
+  {db.users.map(u=><tr key={u.id}><td>{u.name}</td><td>{u.owner?'مالك':u.role==='manager'?'مدير':'موظف'}</td>
+  <td>{u.owner&&!user.owner?'—':<PinEdit key={u.id} u={u} db={db} upd={upd} T={T} who={user.name} canSee={!!user.owner}/>}</td>
+  <td>{u.id!==user.id&&!u.owner&&(user.owner||u.role!=='manager')&&<button className="btn sm d" onClick={()=>upd(d=>{d.users=d.users.filter(x=>x.id!==u.id);addLog(d,user.name,'حذف موظف '+u.name);return d})}>حذف</button>}</td></tr>)}</tbody></table></div>
+  <p className="mu">ملاحظة: الرقم السري للمدير يفتح أي حساب موظف. الأرقام السرية يراها المالك فقط.</p><h4>إضافة موظف</h4><div className="row"><div className="f1"><input placeholder="الاسم" value={nu.name} onChange={e=>setNu({...nu,name:e.target.value})}/></div>
+  <div className="f1"><input placeholder="الرقم السري" value={nu.pin} onChange={e=>setNu({...nu,pin:e.target.value})}/></div>
+  <div className="f1"><select value={nu.role} onChange={e=>setNu({...nu,role:e.target.value})}><option value="employee">موظف</option>{user.owner&&<option value="manager">مدير</option>}</select></div></div><button className="btn s" onClick={addU}>إضافة</button></div>}
+ {tab==='log'&&<div className="card"><h4>سجل التدقيق</h4><div className="tw"><table><thead><tr><th>الوقت</th><th>المستخدم</th><th>الحدث</th></tr></thead><tbody>
+  {db.log.slice(0,80).map((l,i)=><tr key={i}><td>{new Date(l.ts).toLocaleString('ar-SY')}</td><td>{l.who}</td><td>{l.t}</td></tr>)}</tbody></table></div></div>}
+ </div>)};
+
+const App=()=>{
+ const [db,setDb]=useState(load),[user,setUser]=useState(null),[toast,setToast]=useState('');
+ useEffect(()=>{try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){}},[db]);
+ useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(''),2800);return()=>clearTimeout(t)},[toast]);
+ const upd=fn=>setDb(d=>fn(JSON.parse(JSON.stringify(d))));
+ const P={db,upd,user,onLogout:()=>setUser(null),T:setToast};
+ return(<>{!user?<Login db={db} T={setToast} onLogin={u=>{setUser(u);upd(d=>{addLog(d,u.name,'تسجيل دخول');return d})}}/>:user.role==='manager'?<Manager {...P}/>:<Cashier {...P}/>}
+ {toast&&<div className="toast">{toast}</div>}</>)};
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
